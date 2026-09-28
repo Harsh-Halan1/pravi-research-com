@@ -1,0 +1,437 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  schemas   = ["public", "pravi"]
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum AssetType {
+  ROAD_SEGMENT
+
+  @@schema("pravi")
+}
+
+enum AssetStatus {
+  DRAFT
+  PENDING_VERIFICATION
+  NEEDS_CHANGES
+  ACTIVE
+  RETIRED
+
+  @@schema("pravi")
+}
+
+enum LifecycleStage {
+  PLANNING_ACQUISITION
+  REGISTRATION
+  OWNERSHIP_LOCATION_ASSIGNMENT
+  INSPECTION
+  CONDITION_RISK_ASSESSMENT
+  MAINTENANCE_REPAIR
+  IMPROVEMENT_UPGRADE
+  TRANSFER
+  DECOMMISSIONED
+
+  @@schema("pravi")
+}
+
+enum RoadSegmentStatus {
+  DRAFT
+  PENDING_VERIFICATION
+  NEEDS_CHANGES
+  VERIFIED
+
+  @@schema("pravi")
+}
+
+enum EvidenceVisibility {
+  INTERNAL
+  RESTRICTED
+  PUBLIC_APPROVED
+
+  @@schema("pravi")
+}
+
+enum ConditionRating {
+  UNKNOWN
+  GOOD
+  FAIR
+  POOR
+  CRITICAL
+
+  @@schema("pravi")
+}
+
+enum UserRole {
+  SUBMITTER
+  VERIFIER
+  INSPECTOR
+  MAINTENANCE_OFFICER
+  PLANNER
+  ADMIN
+
+  @@schema("pravi")
+}
+
+enum LifecycleEventType {
+  ASSET_CREATED
+  ASSET_SUBMITTED
+  ASSET_APPROVED
+  ASSET_RETURNED
+  ASSET_UPDATED
+  INSPECTION_RECORDED
+  WORK_ORDER_CREATED
+  WORK_ORDER_UPDATED
+  WORK_COMPLETED
+  ASSET_RETIRED
+  ASSET_TRANSFERRED
+  ASSET_DECOMMISSIONED
+
+  @@schema("pravi")
+}
+
+enum InspectionStatus {
+  SUBMITTED
+  VERIFIED
+  NEEDS_CHANGES
+
+  @@schema("pravi")
+}
+
+enum FindingSeverity {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+
+  @@schema("pravi")
+}
+
+enum WorkOrderStatus {
+  PLANNED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+  CANCELLED
+
+  @@schema("pravi")
+}
+
+enum WorkPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+
+  @@schema("pravi")
+}
+
+model Department {
+  id           String           @id @default(cuid())
+  code         String           @unique
+  name         String
+  jurisdiction String?
+  parentId     String?
+  parent       Department?      @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Department[]     @relation("DepartmentTree")
+  users        RoleAssignment[]
+  assets       Asset[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([parentId])
+  @@schema("pravi")
+}
+
+model UserProfile {
+  id               String                   @id @default(cuid())
+  clerkUserId      String                   @unique
+  displayName      String
+  email            String?
+  active           Boolean                  @default(true)
+  roleAssignments  RoleAssignment[]
+  createdAssets    Asset[]                  @relation("AssetCreator")
+  lifecycleEvents  LifecycleEvent[]         @relation("EventActor")
+  roadStatusEvents RoadSegmentStatusEvent[] @relation("RoadStatusEventActor")
+  inspectionEvents InspectionEvent[]        @relation("InspectionEventActor")
+  workOrderEvents  WorkOrderEvent[]         @relation("WorkOrderEventActor")
+  inspections      Inspection[]             @relation("Inspector")
+  assignedWork     WorkOrder[]              @relation("WorkAssignee")
+  createdWork      WorkOrder[]              @relation("WorkCreator")
+  evidence         Evidence[]
+  auditEvents      AuditEvent[]
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@schema("pravi")
+}
+
+model RoleAssignment {
+  id           String      @id @default(cuid())
+  userId       String
+  user         UserProfile @relation(fields: [userId], references: [id], onDelete: Restrict)
+  departmentId String
+  department   Department  @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  role         UserRole
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+
+  @@unique([userId, departmentId, role])
+  @@index([departmentId, role, active])
+  @@schema("pravi")
+}
+
+model Asset {
+  id               String           @id @default(cuid())
+  assetCode        String           @unique
+  name             String
+  assetType        AssetType
+  status           AssetStatus      @default(DRAFT)
+  lifecycleStage   LifecycleStage   @default(REGISTRATION)
+  currentCondition ConditionRating  @default(UNKNOWN)
+  latitude         Decimal?         @db.Decimal(9, 6)
+  longitude        Decimal?         @db.Decimal(9, 6)
+  departmentId     String
+  department       Department       @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  createdById      String
+  createdBy        UserProfile      @relation("AssetCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  roadSegment      RoadSegment?
+  events           LifecycleEvent[]
+  inspections      Inspection[]
+  workOrders       WorkOrderAsset[]
+  evidence         Evidence[]       @relation("AssetEvidence")
+  auditEvents      AuditEvent[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([assetType, status])
+  @@index([departmentId, status])
+  @@index([currentCondition])
+  @@index([lifecycleStage])
+  @@schema("pravi")
+}
+
+model RoadSegment {
+  id             String                   @id @default(cuid())
+  assetId        String                   @unique
+  asset          Asset                    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  routeName      String
+  externalRoadId String?
+  startMarker    String
+  endMarker      String
+  lengthKm       Decimal                  @db.Decimal(9, 3)
+  surfaceType    String
+  workflowStatus RoadSegmentStatus        @default(DRAFT)
+  startLatitude  Decimal?                 @db.Decimal(9, 6)
+  startLongitude Decimal?                 @db.Decimal(9, 6)
+  endLatitude    Decimal?                 @db.Decimal(9, 6)
+  endLongitude   Decimal?                 @db.Decimal(9, 6)
+  statusEvents   RoadSegmentStatusEvent[]
+
+  @@index([routeName])
+  @@index([externalRoadId])
+  @@schema("pravi")
+}
+
+model RoadSegmentStatusEvent {
+  id            String             @id @default(cuid())
+  roadSegmentId String
+  roadSegment   RoadSegment        @relation(fields: [roadSegmentId], references: [id], onDelete: Restrict)
+  actorId       String
+  actor         UserProfile        @relation("RoadStatusEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  fromStatus    RoadSegmentStatus?
+  toStatus      RoadSegmentStatus
+  reason        String?
+  occurredAt    DateTime           @default(now())
+
+  @@index([roadSegmentId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@schema("pravi")
+}
+
+model LifecycleEvent {
+  id         String             @id @default(cuid())
+  assetId    String
+  asset      Asset              @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  actorId    String
+  actor      UserProfile        @relation("EventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  type       LifecycleEventType
+  fromStatus AssetStatus?
+  toStatus   AssetStatus?
+  fromStage  LifecycleStage?
+  toStage    LifecycleStage?
+  reason     String?
+  details    Json?
+  occurredAt DateTime           @default(now())
+
+  @@index([assetId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@schema("pravi")
+}
+
+model Inspection {
+  id          String              @id @default(cuid())
+  assetId     String
+  asset       Asset               @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  inspectorId String
+  inspector   UserProfile         @relation("Inspector", fields: [inspectorId], references: [id], onDelete: Restrict)
+  inspectedAt DateTime
+  condition   ConditionRating
+  notes       String?
+  status      InspectionStatus    @default(SUBMITTED)
+  findings    InspectionFinding[]
+  evidence    Evidence[]          @relation("InspectionEvidence")
+  events      InspectionEvent[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([assetId, inspectedAt])
+  @@index([status, inspectedAt])
+  @@schema("pravi")
+}
+
+model InspectionEvent {
+  id           String            @id @default(cuid())
+  inspectionId String
+  inspection   Inspection        @relation(fields: [inspectionId], references: [id], onDelete: Restrict)
+  actorId      String
+  actor        UserProfile       @relation("InspectionEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  fromStatus   InspectionStatus?
+  toStatus     InspectionStatus
+  reason       String?
+  details      Json?
+  occurredAt   DateTime          @default(now())
+
+  @@index([inspectionId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@schema("pravi")
+}
+
+model InspectionFinding {
+  id                String          @id @default(cuid())
+  inspectionId      String
+  inspection        Inspection      @relation(fields: [inspectionId], references: [id], onDelete: Restrict)
+  category          String
+  severity          FindingSeverity
+  description       String
+  recommendedAction String?
+  startMarker       String?
+  endMarker         String?
+  evidence          Evidence[]      @relation("FindingEvidence")
+  createdAt         DateTime        @default(now())
+
+  @@index([inspectionId, severity])
+  @@schema("pravi")
+}
+
+model WorkOrder {
+  id              String           @id @default(cuid())
+  workOrderCode   String           @unique
+  title           String
+  workType        String
+  priority        WorkPriority     @default(NORMAL)
+  status          WorkOrderStatus  @default(PLANNED)
+  description     String?
+  startMarker     String?
+  endMarker       String?
+  assigneeId      String?
+  assignee        UserProfile?     @relation("WorkAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdById     String
+  createdBy       UserProfile      @relation("WorkCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  plannedStart    DateTime?
+  plannedEnd      DateTime?
+  actualStart     DateTime?
+  actualEnd       DateTime?
+  estimatedCost   Decimal?         @db.Decimal(14, 2)
+  actualCost      Decimal?         @db.Decimal(14, 2)
+  completionNotes String?
+  assets          WorkOrderAsset[]
+  evidence        Evidence[]       @relation("WorkEvidence")
+  events          WorkOrderEvent[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([status, priority])
+  @@index([assigneeId, status])
+  @@schema("pravi")
+}
+
+model WorkOrderEvent {
+  id          String           @id @default(cuid())
+  workOrderId String
+  workOrder   WorkOrder        @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  actorId     String
+  actor       UserProfile      @relation("WorkOrderEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  fromStatus  WorkOrderStatus?
+  toStatus    WorkOrderStatus
+  reason      String?
+  occurredAt  DateTime         @default(now())
+
+  @@index([workOrderId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@schema("pravi")
+}
+
+model WorkOrderAsset {
+  workOrderId String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  assetId     String
+  asset       Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+
+  @@id([workOrderId, assetId])
+  @@index([assetId])
+  @@schema("pravi")
+}
+
+model Evidence {
+  id                String             @id @default(cuid())
+  storageKey        String             @unique
+  originalName      String
+  mimeType          String
+  sizeBytes         Int
+  visibility        EvidenceVisibility @default(INTERNAL)
+  capturedAt        DateTime?
+  capturedLatitude  Decimal?           @db.Decimal(9, 6)
+  capturedLongitude Decimal?           @db.Decimal(9, 6)
+  uploadedById      String
+  uploadedBy        UserProfile        @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  assetId           String
+  asset             Asset              @relation("AssetEvidence", fields: [assetId], references: [id], onDelete: Restrict)
+  inspectionId      String?
+  inspection        Inspection?        @relation("InspectionEvidence", fields: [inspectionId], references: [id], onDelete: Restrict)
+  findingId         String?
+  finding           InspectionFinding? @relation("FindingEvidence", fields: [findingId], references: [id], onDelete: Restrict)
+  workOrderId       String?
+  workOrder         WorkOrder?         @relation("WorkEvidence", fields: [workOrderId], references: [id], onDelete: Restrict)
+  createdAt         DateTime           @default(now())
+
+  @@index([assetId])
+  @@index([inspectionId])
+  @@index([findingId])
+  @@index([workOrderId])
+  @@schema("pravi")
+}
+
+model AuditEvent {
+  id            String       @id @default(cuid())
+  actorId       String?
+  actor         UserProfile? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  assetId       String?
+  asset         Asset?       @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  action        String
+  targetType    String
+  targetId      String
+  changeSummary Json?
+  ipAddress     String?
+  occurredAt    DateTime     @default(now())
+
+  @@index([actorId, occurredAt])
+  @@index([targetType, targetId, occurredAt])
+  @@schema("pravi")
+}
